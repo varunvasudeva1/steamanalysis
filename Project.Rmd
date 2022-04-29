@@ -1,0 +1,186 @@
+---
+title: "STA 483 Final Project"
+author: "Varun Vasudeva, Simon Louisin, Sean Finnigan, Gina Krynski"
+date: "4/26/2022"
+output: html_document
+---
+
+```{r warning=FALSE, message=FALSE}
+library(tidyverse)
+library(forecast)
+library(TSA)
+```
+
+This report is comprised of comprehensive analyses for four games over the period Jan 2012 - Oct 2021. We are using monthly player data from Steam, a game distribution platform, to understand how these games from different genres have changed in popularity over time and if any conclusions can be drawn about the player engagement trends of genres based on the results we obtain.
+
+## Game 1: Universe Sandbox
+
+### Game Description & Data Processing
+
+Universe Sandbox is a physics-based space simulator. It merges gravity, climate, collision, and material interactions to reveal the beauty of our universe and the fragility of our planet.
+
+```{r}
+steam <- read.csv('AllSteamData.csv')
+steam <- steam %>%
+  drop_na() %>%
+  filter(Name == 'Universe Sandbox', Month != 'Last 30 Days')
+head(steam)
+```
+
+```{r}
+steam.ts <- ts(steam$Avg..Players, start=c(2013, 1), end=c(2021, 6), frequency=12)
+autoplot(steam.ts)
+```
+
+### ACF and PACF Plots
+
+```{r}
+ggAcf(steam.ts)
+ggPacf(steam.ts)
+```
+
+The ACF output shows us an ACF plot very reminiscent of the AR(1) process's ACF plot. This will be helpful in model building, as we will see later on. The ACF shows all lags till lag 24 as having significant autocorrelation. The PACF further reveals that most of the autocorrelation at any given lag is due to the autocorrelation of the first lag.
+
+### Stationarity Analysis
+
+We can now examine the data to see if differencing induces stationarity.
+
+```{r}
+steam.ts %>%
+  diff() %>%
+  ggtsdisplay()
+```
+
+Taking the first difference of the data indeed makes it mostly stationary. We can see this by the `autoplot()` result in the top frame showing the monthly players over time centered at 0 and having relatively constant variance throughout the plot. The negative spike at the start of 2019 makes the constant variance assumption come under scrutiny but it can be attributed to randomness since there is only one of them (this indicates it isn't a systemic issue).
+
+Additionally, the ACF plot shows a significant ACF spike at lag 1, but it is within the significance boundary denoted by the dotted blue line. The same is true for the PACF, where the first lag is responsible for most of the significant ACF when removing the effect of the other lags. There is no significant lag in the PACF apart from the first one, until perhaps the 18th lag (but this is not considered).
+
+### Seasonality Analysis
+
+```{r}
+ggmonthplot(steam.ts)
+```
+
+`ggmonthplot()` shows us a somewhat sinusoidal trend in the average values of monthly players by month across 2013-2021. However, judging the black line plots behind the horizontal, blue, mean-value markers more closely, we can see there is extreme variability in this data, making the mean a bad choice for evaluating the seasonality of this data.
+
+```{r}
+ggseasonplot(steam.ts)
+```
+
+The `ggseasonplot()` output shows us that the trend for most years looks very much like white-noise, with random oscillations. The 2019, 2020, and 2021 years are the only ones that deviate from this trend, making them aberrant years. We can explain this steep decline in monthly players by the release of the sequel to this game, Universe Sandbox 2.
+
+```{r}
+p <- periodogram(steam.ts)
+maxidx <- which(p$spec == max(p$spec))
+p$freq[maxidx]
+```
+
+There is a large periodogram spike at $\omega=0.009259259\approx0.01$. However, this is not representative of any real usable statistic - for example, a bimonthly or semi-annual spike in monthly average users. Thus, we can ignore this and take it as further proof that the data is not seasonal in nature.
+
+### Model Building
+
+We know to include a difference of 1 in our models because we found our data to be stationary when differenced once. Thus, we will start building models with d = 1 within our ARIMA parameters. Going back to Stationarity Analysis, the ACF and PACF plots we obtained upon taking the first difference were strikingly similar to an MA(1) model.
+
+```{r}
+mod1 <- arima(steam.ts, order=c(0, 1, 1))
+checkresiduals(mod1)
+```
+
+This model is a great fit for the data. We can tell by the extremely high p-value of 0.9602. This indicates we can fail to reject the null hypothesis that there is a lack of fit, and by a significant margin at that, since $p=0.96 \gg 0.05$. We can also tell since the ACF and PACF plots show no significant lags at all, as seen by all ACF values being between the dotted blue lines demarcating significance.
+
+Another model worth trying immediately is ARIMA(1, 0, 0). We can tell because the initial ACF and PACF plots for `steam.ts` before differencing revealed similarities with the ACF and PACF plots of the AR(1) process.
+
+```{r}
+mod2 <- arima(steam.ts, order=c(1, 0, 0))
+checkresiduals(mod2)
+```
+
+This model also fits the data very well. It has a high p-value of 0.8781 and shows no significant lags either. However, the ARIMA(0, 1, 1) model has a higher p-value and has no significant ACF at spike 1. Thus, so far, the ARIMA(0, 1, 1) model provides a preferred fit and adds to the complexity of ARIMA(1, 0, 0) by only one parameter.
+
+```{r}
+mod3 <- arima(steam.ts, order=c(2, 0, 0))
+checkresiduals(mod3)
+```
+
+We see that incrementing the AR parameter by 1 results in a further boost in predictive performance. This makes sense as the PACF plot for the non-differenced data showed the biggest ACF spike at lag 1 but also a smaller, less significant but still non-zero ACF at lag 2. Accounting for this second, smaller lag would result in a better model fit, as we're seeing above.
+
+Before selecting a model, we can also look at the selection `auto.arima()` comes to, to see if there are unexplored parameter configurations that result in better predictive performance.
+
+```{r}
+automod <- auto.arima(steam.ts)
+checkresiduals(automod)
+```
+
+The automatic selection defaulted to ARIMA(0, 1, 1) as the ideal model. We will now compare AICs to come to a final decision between ARIMA(0, 1, 1), ARIMA(1, 0, 0), and ARIMA(2, 0, 0).
+
+```{r}
+data.frame("Model" = c('ARIMA(0,1,1)', 'ARIMA(1,0,0)', 'ARIMA(2,0,0)'),
+           "AIC" = c(mod1$aic, mod2$aic, mod3$aic),
+           "S2" = c(mod1$sigma2, mod2$sigma2, mod3$sigma2))
+```
+
+The table results show us that ARIMA(1, 0, 0) has the highest AIC and $\sigma^2$ value, so it is the least optimal model and can be discarded. Now the choice is between ARIMA(0, 1, 1) and ARIMA(2, 0, 0). Although ARIMA(2, 0, 0) has the same number of parameters and very, very similar performance to the ARIMA(0, 1, 1), we agree with the `auto.arima()` result because
+
+1) AIC of ARIMA(0, 1, 1) < AIC of ARIMA(2, 0, 0), and,
+
+2) even though $\sigma^2$ of ARIMA(2, 0, 0) < $\sigma^2$ of ARIMA(0, 1, 1), the difference in $\sigma^2$ values (= 4) is much smaller than the difference in AIC (= 16), making AIC our priority selection criteria.
+
+```{r}
+mod1
+```
+
+Thus, our final model is ARIMA(0, 1, 1), whose model equation is
+\[
+  (1-B)Y_{t}=\varepsilon_{t}-0.2\varepsilon_{t-1}
+\]
+
+
+
+
+
+
+## Game 2: Stardew Valley
+
+### Game Description & Data Processing
+
+### ACF and PACF Plots
+
+### Stationarity Analysis
+
+### Seasonality Analysis
+
+### Model Building
+
+
+
+
+
+
+## Game 3: Counter-Strike: Global Offensive
+
+### Game Description & Data Processing
+
+### ACF and PACF Plots
+
+### Stationarity Analysis
+
+### Seasonality Analysis
+
+### Model Building
+
+
+
+
+
+
+## Game 4: Sid Meier's Civilization V
+
+### Game Description & Data Processing
+
+### ACF and PACF Plots
+
+### Stationarity Analysis
+
+### Seasonality Analysis
+
+### Model Building
