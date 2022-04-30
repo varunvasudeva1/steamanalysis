@@ -9,6 +9,9 @@ output: html_document
 library(tidyverse)
 library(forecast)
 library(TSA)
+library(tseries)
+library(fpp2)
+library(lubridate)
 ```
 
 This report is comprised of comprehensive analyses for four games over the period Jan 2012 - Oct 2021. We are using monthly player data from Steam, a game distribution platform, to understand how these games from different genres have changed in popularity over time and if any conclusions can be drawn about the player engagement trends of genres based on the results we obtain.
@@ -160,17 +163,135 @@ Thus, our final model is ARIMA(0, 1, 1), whose model equation is
 
 ### Game Description & Data Processing
 
-### ACF and PACF Plots
+Counter Strike: Global Offensive, commonly nicknamed as CSGO, is a first person shooter with online multiplayer. The data below works with the games average monthly plays for 2012-2021. 
 
-### Stationarity Analysis
+```{r, warning=FALSE}
+data <- read.csv("AllSteamData.csv")
+
+# head(data)
+# colnames(data)
+
+CSGOdata <- data[data$Name == "Counter-Strike: Global Offensive",] %>%
+  select("Avg..Players","Month") %>%
+  mutate(Month = my(Month)) %>%
+  remove_missing() 
+CSGOdata <- CSGOdata[order(CSGOdata$Month),]
+
+csgo.ts <- ts(CSGOdata$Avg..Players, start = c(2012,7), end =c(2021, 9), frequency = 12)
+
+```
+
+### Initial Analyzation
+
+```{r}
+autoplot(csgo.ts) + labs(y = "Avg Monthly Players", title="CSGO Average Players per Month")
+
+Box.test(csgo.ts, type = "Ljung-Box")
+adf.test(csgo.ts)
+
+```
+
+The initial plot does not suggest it is a stationary process, as the mean does not appear constant and the variance does not look relatively constant over time. The test statistic of the dickey fuller also indicate that the data is not stationary.  
+
+
+
+### Stationarity Analysis and ACF PACF Plots
+
+```{r}
+## First differnece test 
+csgod1 <- csgo.ts %>% diff(lag=1)
+autoplot(csgod1) + 
+  labs(y = "Avg Monthly Players", title="CSGO Average Players per Month") + 
+  scale_y_continuous(labels = scales::comma)
+
+ggtsdisplay(csgod1)
+
+ggtsdisplay(log(csgod1))
+adf.test(csgod1)
+```
+
+First difference seems to help stationary. Looking at the ACF PACF, seems to suggest MA(1) or MA(2) because the ACF has spike then drops in a frequent pattern. The PACF has similar plot but Spike at 1 and 2. I will try modeling the data with both and compare the fits.
 
 ### Seasonality Analysis
 
+```{r}
+ggmonthplot(csgo.ts) + labs(y = "Avg Monthly Players")
+
+ggseasonplot(csgo.ts) + labs(y = "Avg Monthly Players")
+
+
+```
+
+There doesn't appear to have any obvious seasonality or patterns looking at these plots and the over all plot of the data.  
+
 ### Model Building
 
+```{r}
+MA1.csgo <- Arima(csgo.ts, order=c(0,1,1))
+MA1.csgo
 
+MA2.csgo <- Arima(csgo.ts, order = c(0,1,2))
+MA2.csgo
 
+plot(MA1.csgo$x, col="red") 
+lines(fitted(MA1.csgo), col="blue")
 
+plot(MA2.csgo$x, col="red") 
+lines(fitted(MA2.csgo), col="blue")
+
+results <- data.frame(Fit = c("AIC", "AICc","BIC"),
+                      MA_1 =c(MA1.csgo$aic, MA1.csgo$aicc, MA1.csgo$bic),
+                      MA_2 = c(MA2.csgo$aic, MA2.csgo$aicc, MA2.csgo$bic))
+results
+```
+
+The output for Arima(0,1,1) labeled as MA_1 seems slightly better than its counterpart Arima(0,1,2) labeled MA_1. The fit values are all a bit higher for the (0,1,2) process than the (0,1,1). 
+
+### Testing against auto.arima
+
+```{r}
+auto.arima(csgo.ts)
+```
+
+Auto.arima() indicates an ARIMA(0,1,1) as its "best", this matches what I found in this case to be the best considering the structure of data and the performance of fit. Arima(0,1,1) can also be called "simple exponential smoothing" and the model equation can be written as $X_{t} = Y_{t-1} + \epsilon_{t} + 0.4896\epsilon_{t-1} $
+
+### Forecast using training testing set
+
+```{r}
+
+csgo.train <- window(csgo.ts, end=c(2021,1))
+csgo.test <- window(csgo.ts, start = c(2021,1))
+
+train_fit <- Arima(order= c(0,1,1), csgo.train)
+
+preds <- forecast(train_fit, h = 8)
+
+autoplot(csgo.train) +
+  autolayer(preds, series = "Arima(0,1,1) Prediction") +
+  autolayer(csgo.test, series = "Actual", size = 2) + 
+  labs(y = "Avg Monthly Players") + 
+  scale_y_continuous(labels = scales::comma)
+
+preds
+csgo.test
+
+```
+
+Seems the model's capability to predict future values is somewhat validated looking at the results of the table and the plot. The true values are within the predicted intervals.
+
+### Genreal forecasts 
+
+```{r}
+
+overall_preds <- forecast(MA1.csgo, h=12)
+
+autoplot(csgo.ts) +
+  autolayer(overall_preds, series ="Predictions") + 
+  labs(y = "Avg Monthly Players")
+  
+overall_preds
+
+```
 
 
 ## Game 4: Sid Meier's Civilization V
