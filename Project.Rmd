@@ -298,10 +298,104 @@ overall_preds
 
 ### Game Description & Data Processing
 
+Sid Meier's Civilzation V, commonly called Civ V, is a 4x strategy game that is mostly played single player but can also be played multiplayer.
+
+```{r}
+steam <- read.csv("AllSteamData.csv")
+civ5 <- steam %>%
+  filter(Name == "Sid Meier's Civilization V") %>%
+  filter(Avg..Players > 0)
+civ5 <- civ5[rev(rownames(civ5)),]
+civ5ts <- ts(civ5[,3], frequency = 12, start=c(2012, 7))
+```
+
 ### ACF and PACF Plots
 
-### Stationarity Analysis
+```{r}
+autoplot(civ5ts)
+ggAcf(civ5ts)
+periodogram(civ5ts)
+```
+
+Our process is definitely not stationary, and our ACF plot definitely indicates some sort of AR or differenced process.
 
 ### Seasonality Analysis
 
+```{r}
+periodogram(civ5ts)
+```
+
+No initial seasonality is found in the data.
+
 ### Model Building
+
+```{r}
+fit0 <- Arima(civ5ts, order = c(1,0,0))
+ggAcf(fit0$residuals)
+fit0
+```
+
+An AR1 model leaves us with a value close to 1, so we differce the model. We also see a pattern in the residual ACF, so we check for seasonality.
+
+```{r}
+fit1 <- Arima(civ5ts, order = c(0,1,0))
+periodogram(fit1$residuals)
+abline(v=2/12)
+```
+
+We see a distinct line at 2/12, so we have a half year seasonal process. This is likely due to number of players increasing in the summer and winter due to time off school, and number of players decreasing in spring and fall due to school.
+
+```{r}
+fit2 <- Arima(civ5ts, order=c(0,1,0), seasonal=list(order=c(0,1,0), period=6))
+ggAcf(fit2$residuals)
+```
+
+We see a spike at time 1 and 6, indicating a MA and seasonal MA component should be added to the model.
+
+```{r}
+fit3 <- Arima(civ5ts, order=c(0,1,1), seasonal=list(order=c(0,1,1), period=6))
+ggAcf(fit3$residuals)
+```
+
+Our residuals look like white noise as is, but we will compare the current model to models with an added AR component to see if any perform better.
+
+```{r}
+fit4 <- Arima(civ5ts, order=c(1,1,1), seasonal=list(order=c(0,1,1), period=6))
+fit5 <- Arima(civ5ts, order=c(1,1,1), seasonal=list(order=c(1,1,1), period=6))
+fit6 <- Arima(civ5ts, order=c(0,1,1), seasonal=list(order=c(1,1,1), period=6))
+
+getAIC <- function(fit) {
+  b <- Box.test(fit$residuals, lag = 8, type = "Ljung")
+  c(fit$aicc, b$p.value)
+}
+
+tab <- rbind(getAIC(fit1), getAIC(fit2), getAIC(fit3),
+             getAIC(fit4), getAIC(fit6),getAIC(fit5))
+colnames(tab) <- c("AICc", "Box Test p-value")
+rownames(tab) <- c("I(1)","I(1), sI(1)[6]","IMA(1,1),sIMA(1,1)[6]","ARIMA(1,1,1),sIMA(1,1)[6]",
+ "IMA(1,1),sARIMA(1,1,1)[6]","ARIMA(1,1,1),sARIMA(1,1,1)[6]")
+kable(tab)
+```
+
+The 3rd model has the best p-value, but there are 3 other models with AICcs within 3, so we compare the model with the best AIC to the model with the best p-value
+
+```{r}
+#IMA(1,1) SIMA(1,1)[6]
+tsdiag(fit3, gof.lag = 15, omit.initial=F)
+#ARIMA(1,1,1) SARIMA(1,1,1)[6]
+tsdiag(fit5, gof.lag = 15, omit.initial=F)
+```
+
+By comparing the output results, we find that the p-values for the smaller model are slightly worse, but still all significant. Becuase of this, we opt for the simpler model with the better AICc.
+
+```{r}
+fit3
+autoplot(forecast(fit3, h=12)) +
+  autolayer(fitted(fit3)) 
+```
+
+Our final model is
+
+$y_{t} = y_{t-1}+y_{t-6}-y_{t-7}+\varepsilon_{t}-0.2138\varepsilon_{t-1}-0.732\varepsilon_{t-6} +0.1565 \varepsilon_{t-7}$
+
+We see by forecasting our model into the future that we expect the average player base to steadily decrease over time.
