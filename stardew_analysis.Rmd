@@ -1,0 +1,148 @@
+---
+title: "Stardew"
+author: "Gina Krynski"
+date: "4/26/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse) 
+library(tseries)
+library(TSA)
+library(forecast)
+library(kableExtra)
+library(lubridate)
+```
+
+# Stardew Valley Data
+
+### Game Description & Data Processing
+**Stardew Valley is a farming simulation role-playing game. Players create their own characters and build up their farms and the surrounding community. Also, players can invite other players online to join their farms and work together.**
+```{r}
+steam <- read.csv('AllSteamData.csv')
+stardew_valley <- steam %>% filter(Name == 'Stardew Valley')
+stardew_valley_clean <- stardew_valley %>% 
+  filter(Month != "Last 30 Days") %>%
+  mutate(date = my(Month)) %>%
+  rename(Avg.Players = Avg..Players) %>%
+  select(date, Avg.Players)
+
+stardew_ts <- ts(stardew_valley_clean$Avg.Players, start=c(2015,12), end=c(2021,9), frequency = 12)
+autoplot(stardew_ts) + labs(y="Average Monthly Players")
+```
+
+
+### ACF and PACF Plots
+```{R}
+ggAcf(stardew_ts)
+ggPacf(stardew_ts)
+```
+
+**The ACF looks most similar to an AR process ACF plot. The PACF suggests thatan  AR(1) component might be useful in a model of this data.**
+
+## Differencing for Stationarity
+```{r}
+first_diff <- stardew_ts %>% diff() 
+first_diff %>% ggtsdisplay()
+adf.test(first_diff)
+```
+
+```{r}
+second_diff <- stardew_ts %>% diff() %>% diff() 
+second_diff %>% ggtsdisplay()
+adf.test(second_diff)
+```
+**The plots of the first and second difference look very similar, with a constant mean and slight non-constant variance. Because there is no significant difference between the first and second differences, we will try models with both.**
+
+
+### ARIMA(1,0,0)
+```{r}
+fit1 <- Arima(stardew_ts, order=c(1, 0, 0))
+summary(fit1)
+ggAcf(residuals(fit1))
+Box.test(residuals(fit1), lag=6, type="Ljung-Box", fitdf=1)
+
+```
+### ARIMA(1,1,0)
+```{r}
+fit2 <- Arima(stardew_ts, order=c(1, 1, 0))
+summary(fit2)
+ggAcf(residuals(fit2))
+Box.test(residuals(fit2), lag=6, type="Ljung-Box", fitdf=1)
+```
+### ARIMA(1,2,0)
+```{r}
+fit3 <- Arima(stardew_ts, order=c(1, 2, 0))
+summary(fit3)
+ggAcf(residuals(fit3))
+Box.test(residuals(fit3), lag=6, type="Ljung-Box", fitdf=1)
+```
+### ARIMA(2,1,0)
+```{r}
+fit4 <- Arima(stardew_ts, order=c(2, 1, 0))
+summary(fit4)
+ggAcf(residuals(fit4))
+Box.test(residuals(fit4), lag=6, type="Ljung-Box", fitdf=1)
+```
+### ARIMA(2,1,1)
+```{r}
+fit5 <- Arima(stardew_ts, order=c(2, 1, 1))
+summary(fit5)
+ggAcf(residuals(fit5))
+Box.test(residuals(fit5), lag=6, type="Ljung-Box", fitdf=1)
+```
+### ARIMA(2,1,2)
+```{r}
+fit6 <- Arima(stardew_ts, order=c(2, 1, 2))
+summary(fit6)
+ggAcf(residuals(fit6))
+Box.test(residuals(fit6), lag=6, type="Ljung-Box", fitdf=1)
+```
+### ARIMA (1,2,2)
+```{r}
+fit7 <- Arima(stardew_ts, order=c(1, 2, 2))
+summary(fit7)
+ggAcf(residuals(fit7))
+Box.test(residuals(fit7), lag=6, type="Ljung-Box", fitdf=1)
+```
+
+
+### ARIMA (2,2,2)
+```{r}
+fit8 <- Arima(stardew_ts, order=c(2, 2, 2))
+summary(fit8)
+ggAcf(residuals(fit8))
+Box.test(residuals(fit8), lag=6, type="Ljung-Box", fitdf=1)
+```
+### ARIMA (1,1,1)
+```{r}
+fit9 <- Arima(stardew_ts, order=c(1, 1, 1))
+summary(fit9)
+ggAcf(residuals(fit9))
+Box.test(residuals(fit9), lag=6, type="Ljung-Box", fitdf=1)
+```
+
+## Auto ARIMA Function (ARIMA(0,1,0))
+```{r}
+fit_auto <- auto.arima(stardew_ts)
+```
+
+### Side by Side Comparison
+```{r}
+Fit <- c('ARIMA(1,0,0)','ARIMA(1,1,0)','ARIMA(1,2,0)','ARIMA(2,1,0)','ARIMA(2,1,1)','ARIMA(2,1,2)','ARIMA(1,2,2)','ARIMA(2,2,2)','ARIMA(1,1,1)', 'Auto Arima')
+AICc <- c(fit1$aicc, fit2$aicc, fit3$aicc, fit4$aicc, fit5$aicc, fit6$aicc, fit7$aicc, fit8$aicc, fit9$aicc, fit_auto$aicc)
+fit_comparison <- data_frame(Fit, AICc)
+fit_comparison %>% kbl() %>% kable_styling()
+```
+## Final Model ARIMA(2,2,2)
+```{r}
+final_fit <- fit8
+autoplot(stardew_ts) + autolayer(fit8$fitted) 
+
+```
+
+
+
+
+
